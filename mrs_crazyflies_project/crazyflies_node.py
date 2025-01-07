@@ -35,6 +35,7 @@ class CrazyFliesNode(Node):
 
         # Agent related Variable
         self.agent_list = []
+        self.trajectory = []
         self.neighbor_list = [] # list of list of agents [[agent1,agent2], [agent4],....]
         self.num_leaders = 1
 
@@ -46,9 +47,10 @@ class CrazyFliesNode(Node):
         for i in range(num_agents):
             # add fly to agent list
             self.agent_list.append(Agent(id = i+1))
+            self.trajectory.append(Path())
 
             # get connection information from param server
-            self.declare_parameter("cf_{}_connections".format(i+1),[])
+            self.declare_parameter("cf_{}_connections".format(i+1),[0])
             cf_connections = self.get_parameter("cf_{}_connections".format(i+1)).value
             self.connection_list.append(cf_connections)
 
@@ -61,28 +63,30 @@ class CrazyFliesNode(Node):
             # create publisher for each fly
             vel_pub = self.create_publisher(Twist, '/cf_{}/cmd_vel'.format(i+1), 10)
             self.vel_pub_list.append(vel_pub) 
-            vel_pub = self.create_publisher(Twist, '/cf_{}/cmd_vel'.format(i+1), 10)
+            traj_pub = self.create_publisher(Path, '/cf_{}/path'.format(i+1), 10)
+            self.traj_pub_list.append(traj_pub) 
 
 
         # others subscription
         self.create_subscription(OccupancyGrid, '/map',self.map_cb,1)
         self.create_subscription(PoseStamped, '/goal_pose',self.goal_cb,10)
+        self.visual_pub = self.create_publisher(MarkerArray,'/cf/visualize',10)
         
 
         # Formation related Variable
-        self.protocol = "Flocking" # "Rendezvous", "Rectangle", "Triangle", "Line"
+        self.protocol = "Triangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
 
 
         time.sleep(3)
-        self.get_logger().info("waiting for takng off...")
-        for vel_pub in self.vel_pub_list:
-            takeoff_vel = Twist()
-            takeoff_vel.linear.x = 0.05
-            vel_pub.publish(takeoff_vel)
+        # self.get_logger().info("waiting for takng off...")
+        # for vel_pub in self.vel_pub_list:
+        #     takeoff_vel = Twist()
+        #     takeoff_vel.linear.x = 0.05
+        #     vel_pub.publish(takeoff_vel)
 
-        time.sleep(10)
+        # time.sleep(10)
 
         self.get_logger().info("finished takng off...")
 
@@ -92,6 +96,8 @@ class CrazyFliesNode(Node):
         for i in range(num_agents):
             self.create_timer(self.dt, partial(self.main_loop,i))
         self.create_timer(self.dt, self.neighbor_loop)
+        self.create_timer(0.5, self.visualize)
+
         
     ###############################################
     ###### Callback
@@ -127,7 +133,7 @@ class CrazyFliesNode(Node):
     def main_loop(self,idx):
         
         # update neighbor
-        if not self.neighbor_list == []: 
+        if not self.neighbor_list == [] and self.protocol != "Rendezvous": 
             self.agent_list[idx].neighbor_agents = self.neighbor_list[idx]
         # update map for each agent
         # self.agent_list[idx].update_perception_field(self.map)
@@ -150,11 +156,11 @@ class CrazyFliesNode(Node):
         vel_msg = Twist()
         vel_msg.linear.x = out_vel.x
         vel_msg.linear.y = out_vel.y
-        self.vel_pub_list[idx].publish(vel_msg)
+        # self.vel_pub_list[idx].publish(vel_msg)
 
     def neighbor_loop(self):
         neighbor_list = []
-        A_matrix = self.A_matrix.copy()
+        A_matrix = np.zeros((self.num_agents,self.num_agents))
         for i in range(len(self.agent_list)):
             neighbor = []
             others_agent = self.agent_list.copy()
@@ -164,11 +170,26 @@ class CrazyFliesNode(Node):
                 ang = abs(wrap_angle(agent.heading - np.arctan2( o_agent.position.y - agent.position.y, o_agent.position.x- agent.position.x)))
                 if dis < agent.neighbor_range and ang < agent.neightbor_angle:
                     neighbor.append(o_agent)
+                    A_matrix[i][o_agent.id-1] = 1
             neighbor_list.append(neighbor)
-            A_matrix[i][neighbor.id-1] = 1
+            
         
         self.A_matrix = A_matrix
         self.neighbor_list = neighbor_list
+
+    ###############################################
+    ###### Consensus
+    ###############################################
+    def cal_rendezvous_vel(self,agents_list, AS):
+        out_vel = Point()
+        # TODO
+
+        return out_vel 
+
+    def cal_formation_vel(self,agents_list, A, formation):
+        out_vel = Point()
+        # TODO
+        return out_vel 
             
     ###############################################
     ###### Other functions
@@ -177,8 +198,9 @@ class CrazyFliesNode(Node):
         A_matrix = np.zeros((self.num_agents,self.num_agents))
         if protocol == "Rendezvous": # fixed A matrix depend on config file
             for i in range(len(connections)): # each reciving node
-                for c in connections[i]: 
-                    A_matrix[i][c-1] = 1
+                for c in connections[i]:
+                    if c != 0: 
+                        A_matrix[i][c-1] = 1
             return A_matrix
         else: # other protocol will be later updated by neighbor
             return A_matrix
@@ -216,10 +238,10 @@ class CrazyFliesNode(Node):
             # fill out the corner 
             formation[0] = [0,0]
             formation[1] = [w,-w]
-            formation[2] = [-w,-w]
+            formation[3] = [-w,-w]
             # put the rest in between
             # TODO
-            formation[3] = [0,w] # menawhile just put in between
+            formation[2] = [0,-w] # menawhile just put in between
                 
             return list(formation)
         elif protocol == "Line":
@@ -231,43 +253,81 @@ class CrazyFliesNode(Node):
     ###############################################
     ###### Visualization
     ###############################################
-    def visualize(self,_):
+    def visualize(self):
         if self.enable_visualization:
             self.visualize_goal()
             #self.visualize_acc()
             self.update_trajectory()
+            self.visualize_connections()
+            if self.protocol != "Flocking" and self.protocol != "Rendezvous":
+                self.visualize_formation()
+            print(self.neighbor_list)
+            print(self.A_matrix)
             
-            # self.visual_pub.publish(self.visualize_array)
+            self.visual_pub.publish(self.visualize_array)
+            self.visualize_array = MarkerArray()
             # self.visual_pub_acc.publish(self.visualize_acc_array)
 
     def visualize_goal(self):
         if self.agent_list[0].goal:
-            frame_id = "map"
+            frame_id = "world"
             ns = "goal"
 
             marker = self.create_marker(666,ns, Marker.SPHERE, [self.agent_list[0].goal.x,self.agent_list[0].goal.y,0.2], 
-                [0.3,0.3,0.3], [1,0,0,1], frame_id, None)
+                [0.3,0.3,0.3], [1.0,0.0,0.0,1.0], frame_id, None)
             self.visualize_array.markers.append(marker)
 
     def update_trajectory(self):
-        # Create a new pose stamped with the current position
-        pose_stamped = PoseStamped()
-        pose_stamped.header.stamp = self.get_clock().now().to_msg()
-        pose_stamped.header.frame_id = "world"
-        pose_stamped.pose.position = self.boid.position
+        for i in range(self.num_agents):
+            # Create a new pose stamped with the current position
+            pose_stamped = PoseStamped()
+            pose_stamped.header.stamp = self.get_clock().now().to_msg()
+            pose_stamped.header.frame_id = "world"
+            pose_stamped.pose.position.x = self.agent_list[i].position.x
+            pose_stamped.pose.position.y = self.agent_list[i].position.y
 
-        # Update the trajectory for the specified robot
-        
-        self.trajectory.poses.append(pose_stamped)
+            # Update the trajectory for the specified robot
+            
+            self.trajectory[i].poses.append(pose_stamped)
 
-        traj_to_keep = 500
-        if len(self.trajectory.poses) > traj_to_keep:
-            self.trajectory.poses = self.trajectory.poses[-traj_to_keep:]
+            traj_to_keep = 500
+            if len(self.trajectory[i].poses) > traj_to_keep:
+                self.trajectory[i].poses = self.trajectory[i].poses[-traj_to_keep:]
 
-        self.trajectory.header.frame_id = "map"
+            self.trajectory[i].header.frame_id = "world"
 
-        self.trajectory_pubs.publish(self.trajectory)
+            self.traj_pub_list[i].publish(self.trajectory[i])
+
+    def visualize_connections(self):
+        frame_id = "world"
+        ns = "connections"
+
+        points = []
+        for i in range(self.num_agents):
+            for j in range(self.num_agents):
+                if self.A_matrix[i][j] == 1:
+                    points.append([self.agent_list[i].position.x ,self.agent_list[i].position.y ,0.0])
+                    points.append([self.agent_list[j].position.x ,self.agent_list[j].position.y,0.0])
+
+        marker = self.create_marker(222,ns, Marker.LINE_LIST, [0.0,0.0,0.0], 
+                [0.04,0.04,0.04], [0.0,0.0,1.0,1.0], frame_id, points)
+        self.visualize_array.markers.append(marker)
     
+    def visualize_formation(self):
+        frame_id = "world"
+        ns = "formation"
+
+        points = []
+        for i in range(self.num_agents-1):
+            points.append([self.formation[i][0] + self.agent_list[0].position.x ,self.formation[i][1] +self.agent_list[0].position.y ,0.0])
+            points.append([self.formation[i+1][0] + self.agent_list[0].position.x ,self.formation[i+1][1] +self.agent_list[0].position.y ,0.0])
+        points.append([self.formation[-1][0] + self.agent_list[0].position.x ,self.formation[-1][1] +self.agent_list[0].position.y ,0.0])
+        points.append([self.formation[0][0] + self.agent_list[0].position.x ,self.formation[0][1] +self.agent_list[0].position.y ,0.0])
+        print(points)
+        marker = self.create_marker(787,ns, Marker.LINE_LIST, [0.0,0.0,0.0], 
+                [0.04,0.04,0.04], [0.0,1.0,0.0,1.0], frame_id, points)
+        self.visualize_array.markers.append(marker)
+        
     def create_marker(self, marker_id, ns, marker_type, position, scale, color, frame_id,points):
         marker = Marker()
         marker.header.frame_id = frame_id  # Reference frame (change as necessary)
@@ -288,11 +348,35 @@ class CrazyFliesNode(Node):
         marker.pose.orientation.z = 0.0
         marker.pose.orientation.w = 1.0
 
+         # Set maker Points
+        if marker_type == Marker.LINE_LIST:
+            for point in points:
+                p = Point()
+                p.x = point[0]
+                p.y = point[1]
+                p.z = point[2]
+                marker.points.append(p)
+
+        # Set marker scale
+        marker.scale.x = scale[0]
+        marker.scale.y = scale[1]
+        marker.scale.z = scale[2]
+
+        # Set marker color
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
+        marker.color.a = color[3]  # Alpha (transparency)
+
+        return marker
+
+        
+
 
 def main(args=None):
     rclpy.init(args=args)
 
-    cfn = CrazyFliesNode(7)
+    cfn = CrazyFliesNode(4)
 
     rclpy.spin(cfn)
 

@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'mrs_crazyflies_project'
 
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml'))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,4 +27,7 @@ setup(
             'crazyflies_node = mrs_crazyflies_project.crazyflies_node:main'
         ],
     },
+    # data_files=[
+    #     (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
+    # ],
 )
