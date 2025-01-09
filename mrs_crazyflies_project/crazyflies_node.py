@@ -196,16 +196,58 @@ class CrazyFliesNode(Node):
     ###############################################
     ###### Consensus
     ###############################################
+    def laplacian(self,A):
+        # diagonal of laplacian = row sum of A
+        L_diag = np.sum(A,axis=1)
+        L = np.diag(L_diag)
+        # fill in the rest of the elements of L
+        L -= A
+        return L
+    
     def cal_rendezvous_vel(self,agents_list, A):
-        out_vel = Point()
-        # TODO
+        out_vel_list = []
 
-        return out_vel 
+        L = self.laplacian(A) # convert A to L
+        x = [[agent.position.x,agent.position.y] for agent in agents_list]
+        x = np.array(x) # convert to np array
+
+        # consensus equation
+        x_dot = -L@x
+
+        # convert to list of Point objects
+        for i in range(x_dot.shape[0]):
+            out_vel = Point()
+            out_vel.x = x_dot[i,0]
+            out_vel.y = x_dot[i,1]
+            out_vel_list.append(out_vel)
+
+        return out_vel_list
 
     def cal_formation_vel(self,agents_list, A, formation):
-        out_vel = Point()
-        # TODO
-        return out_vel 
+        # make sure the number of elements in formation is the same as the number of agents
+        assert len(agents_list) == len(formation)
+
+        out_vel_list = []
+
+        L = self.laplacian(A) # convert A to L
+
+        num_agents = len(agents_list)
+        x = [[agents_list[i].position.x - formation[i,0],agents_list[i].position.y - formation[i,1]] for i in range(num_agents)]
+        x = np.array(x) # convert to np array
+
+        # consensus equation
+        x_dot = -L@x
+
+        # TODO: incorporate pinning control
+
+        # convert to list of Point objects
+        for i in range(x_dot.shape[0]):
+            out_vel = Point()
+            out_vel.x = x_dot[i,0]
+            out_vel.y = x_dot[i,1]
+            out_vel_list.append(out_vel)
+
+        return out_vel_list
     
     def combine_vel(self,reynold,consensus):
         out_vel = Point()
