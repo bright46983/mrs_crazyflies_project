@@ -74,17 +74,17 @@ class CrazyFliesNode(Node):
         
 
         # Formation related Variable
-        self.protocol = "Triangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
+        self.protocol = "Rendezvous" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
 
 
         time.sleep(3)
-        # self.get_logger().info("waiting for takng off...")
-        # for vel_pub in self.vel_pub_list:
-        #     takeoff_vel = Twist()
-        #     takeoff_vel.linear.x = 0.05
-        #     vel_pub.publish(takeoff_vel)
+        self.get_logger().info("waiting for takng off...")
+        for vel_pub in self.vel_pub_list:
+            takeoff_vel = Twist()
+            takeoff_vel.linear.x = 0.05
+            vel_pub.publish(takeoff_vel)
 
         # time.sleep(10)
 
@@ -138,49 +138,65 @@ class CrazyFliesNode(Node):
         # update map for each agent
         # self.agent_list[idx].update_perception_field(self.map)
 
-        # caculate acc
-        nav_acc = self.agent_list[idx].navigation_acc()
-        sep_acc = self.agent_list[idx].seperation_acc()
-        coh_acc = self.agent_list[idx].cohesion_acc()
-        align_acc = self.agent_list[idx].allignment_acc()
-        # obs_acc = self.agent_list[idx].obstacle_acc()
+        # Reynold 
         zero = Point()
+        nav_acc = zero
+        sep_acc = self.agent_list[idx].seperation_acc()
+        coh_acc = zero
+        align_acc = zero
         obs_acc = zero
-        self.acc_list = [nav_acc,sep_acc,coh_acc,align_acc,zero]
+        # obs_acc = self.agent_list[idx].obstacle_acc()
+
+        if self.protocol == "Flocking" :
+            nav_acc = self.agent_list[idx].navigation_acc()
+            coh_acc = self.agent_list[idx].cohesion_acc()
+            align_acc = self.agent_list[idx].allignment_acc()
+        
+        self.acc_list = [nav_acc,sep_acc,coh_acc,align_acc,obs_acc]
 
         all_acc = self.agent_list[idx].combine_acc_priority(nav_acc,sep_acc,coh_acc,align_acc,obs_acc)    
 
-        out_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt)
+        reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt)
 
+        # Consensus
+        consensus_vel = zero
+        if self.protocol == "Rendezvous":
+            consensus_vel = self.cal_rendezvous_vel(self.agent_list,self.A_matrix)
+        elif self.protocol != "Flocking":
+            consensus_vel = self.cal_formation_vel(self.agent_list,self.A_matrix,self.formation)
+            
+        # combine velocity (Reynold + Consensus)
+        out_vel = self.combine_vel(reynold_vel ,consensus_vel)
         # publish        
         vel_msg = Twist()
         vel_msg.linear.x = out_vel.x
         vel_msg.linear.y = out_vel.y
-        # self.vel_pub_list[idx].publish(vel_msg)
+        self.vel_pub_list[idx].publish(vel_msg)
 
     def neighbor_loop(self):
-        neighbor_list = []
-        A_matrix = np.zeros((self.num_agents,self.num_agents))
-        for i in range(len(self.agent_list)):
-            neighbor = []
-            others_agent = self.agent_list.copy()
-            agent = others_agent.pop(i)
-            for o_agent in others_agent:
-                dis = np.linalg.norm(np.array([agent.position.x, agent.position.y])-np.array([o_agent.position.x, o_agent.position.y]))
-                ang = abs(wrap_angle(agent.heading - np.arctan2( o_agent.position.y - agent.position.y, o_agent.position.x- agent.position.x)))
-                if dis < agent.neighbor_range and ang < agent.neightbor_angle:
-                    neighbor.append(o_agent)
-                    A_matrix[i][o_agent.id-1] = 1
-            neighbor_list.append(neighbor)
+        if self.protocol != "Rendezvous":
+            neighbor_list = []
+            A_matrix = np.zeros((self.num_agents,self.num_agents))
+            for i in range(len(self.agent_list)):
+                neighbor = []
+                others_agent = self.agent_list.copy()
+                agent = others_agent.pop(i)
+                for o_agent in others_agent:
+                    dis = np.linalg.norm(np.array([agent.position.x, agent.position.y])-np.array([o_agent.position.x, o_agent.position.y]))
+                    ang = abs(wrap_angle(agent.heading - np.arctan2( o_agent.position.y - agent.position.y, o_agent.position.x- agent.position.x)))
+                    if dis < agent.neighbor_range and ang < agent.neightbor_angle:
+                        neighbor.append(o_agent)
+                        A_matrix[i][o_agent.id-1] = 1
+                neighbor_list.append(neighbor)
+                
             
-        
-        self.A_matrix = A_matrix
-        self.neighbor_list = neighbor_list
+            self.A_matrix = A_matrix
+            self.neighbor_list = neighbor_list
 
     ###############################################
     ###### Consensus
     ###############################################
-    def cal_rendezvous_vel(self,agents_list, AS):
+    def cal_rendezvous_vel(self,agents_list, A):
         out_vel = Point()
         # TODO
 
@@ -190,6 +206,12 @@ class CrazyFliesNode(Node):
         out_vel = Point()
         # TODO
         return out_vel 
+    
+    def combine_vel(self,reynold,consensus):
+        out_vel = Point()
+        out_vel.x = reynold.x + consensus.x
+        out_vel.y = reynold.y + consensus.y
+        return out_vel
             
     ###############################################
     ###### Other functions
