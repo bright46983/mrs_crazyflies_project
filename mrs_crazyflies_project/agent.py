@@ -22,6 +22,7 @@ class Agent:
         # Random initial position
         self.position.x = 0.0
         self.position.y = 0.0
+        self.position.z = 0.0
         
         # Random initial velocity
         self.velocity.x = 0.0
@@ -29,12 +30,12 @@ class Agent:
 
         #tuning params
         self.max_acc = 3.0
-        self.max_vel = 0.6
+        self.max_vel = 0.5
         self.min_vel = 0.0
         self.nav_gain = 0.8  # Navigation gain, controls the strength of the navigation behavior
-        self.neighbor_range = 1.0# 1.2
+        self.neighbor_range = 100.0# 1.2
         self.neightbor_angle = np.pi/1
-        self.seperation_range = 0.4
+        self.seperation_range = 0.03
         # [10.0,0.8,1.5,0.5,2.0,0.5] #[6.3,1.5,1.5,0.5,1.4,0.5]
         # self.weight_list = [7.0,1.4,1.5,0.4,1.4,0.5]
         self.weight_list = [6.6,1.8,1.5,0.4,1.4,0.5]

@@ -38,6 +38,7 @@ class CrazyFliesNode(Node):
         self.trajectory = []
         self.neighbor_list = [] # list of list of agents [[agent1,agent2], [agent4],....]
         self.num_leaders = 1
+        self.consensus_vel_list = []
 
     
         # create a list of publisher, subscriber for each fly
@@ -48,6 +49,7 @@ class CrazyFliesNode(Node):
             # add fly to agent list
             self.agent_list.append(Agent(id = i+1))
             self.trajectory.append(Path())
+            self.consensus_vel_list.append(Point())
 
             # get connection information from param server
             self.declare_parameter("cf_{}_connections".format(i+1),[0])
@@ -74,7 +76,7 @@ class CrazyFliesNode(Node):
         
 
         # Formation related Variable
-        self.protocol = "Rendezvous" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
+        self.protocol = "Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
 
@@ -83,18 +85,20 @@ class CrazyFliesNode(Node):
         self.get_logger().info("waiting for takng off...")
         for vel_pub in self.vel_pub_list:
             takeoff_vel = Twist()
-            takeoff_vel.linear.x = 0.05
+            takeoff_vel.linear.x = 0.0
             vel_pub.publish(takeoff_vel)
 
-        # time.sleep(10)
+        time.sleep(5)
 
         self.get_logger().info("finished takng off...")
 
 
-        self.dt = 0.1  # seconds
-        
+        self.dt = 0.05  # seconds
+    
+        self.create_timer(self.dt, self.consensus_loop)
         for i in range(num_agents):
             self.create_timer(self.dt, partial(self.main_loop,i))
+        
         self.create_timer(self.dt, self.neighbor_loop)
         self.create_timer(0.5, self.visualize)
 
@@ -105,6 +109,8 @@ class CrazyFliesNode(Node):
     def pose_cb(self, id, msg):
         self.agent_list[id].position.x = msg.pose.position.x
         self.agent_list[id].position.y = msg.pose.position.y
+        self.agent_list[id].position.z = msg.pose.position.z
+
 
     def vel_cb(self, id, msg):
         self.agent_list[id].velocity.x = msg.values[0]
@@ -140,7 +146,7 @@ class CrazyFliesNode(Node):
 
         # Reynold 
         zero = Point()
-        nav_acc = zero
+        nav_acc = self.agent_list[idx].navigation_acc()
         sep_acc = self.agent_list[idx].seperation_acc()
         coh_acc = zero
         align_acc = zero
@@ -148,9 +154,9 @@ class CrazyFliesNode(Node):
         # obs_acc = self.agent_list[idx].obstacle_acc()
 
         if self.protocol == "Flocking" :
-            nav_acc = self.agent_list[idx].navigation_acc()
             coh_acc = self.agent_list[idx].cohesion_acc()
             align_acc = self.agent_list[idx].allignment_acc()
+            
         
         self.acc_list = [nav_acc,sep_acc,coh_acc,align_acc,obs_acc]
 
@@ -160,10 +166,14 @@ class CrazyFliesNode(Node):
 
         # Consensus
         consensus_vel = zero
-        if self.protocol == "Rendezvous":
-            consensus_vel = self.cal_rendezvous_vel(self.agent_list,self.A_matrix)
-        elif self.protocol != "Flocking":
-            consensus_vel = self.cal_formation_vel(self.agent_list,self.A_matrix,self.formation)
+        if self.protocol != "Flocking":
+            consensus_vel = self.consensus_vel_list[idx]
+
+        #stubborn agent
+        if  self.agent_list[idx].goal != None:
+            consensus_vel = zero
+
+        print(consensus_vel)
             
         # combine velocity (Reynold + Consensus)
         out_vel = self.combine_vel(reynold_vel ,consensus_vel)
@@ -189,9 +199,17 @@ class CrazyFliesNode(Node):
                         A_matrix[i][o_agent.id-1] = 1
                 neighbor_list.append(neighbor)
                 
-            
+            A_matrix[0,:] = 0
             self.A_matrix = A_matrix
             self.neighbor_list = neighbor_list
+            # stubborn agent
+            # self.A_matrix[0,:] = 0
+
+    def consensus_loop(self):
+        if self.protocol == "Rendezvous":
+            self.consensus_vel_list = self.cal_rendezvous_vel(self.agent_list,self.A_matrix)
+        elif self.protocol != "Flocking":
+            self.consensus_vel_list = self.cal_formation_vel(self.agent_list,self.A_matrix,self.formation)
 
     ###############################################
     ###### Consensus
@@ -232,7 +250,7 @@ class CrazyFliesNode(Node):
         L = self.laplacian(A) # convert A to L
 
         num_agents = len(agents_list)
-        x = [[agents_list[i].position.x - formation[i,0],agents_list[i].position.y - formation[i,1]] for i in range(num_agents)]
+        x = [[agents_list[i].position.x - formation[i][0],agents_list[i].position.y - formation[i][1]] for i in range(num_agents)]
         x = np.array(x) # convert to np array
 
         # consensus equation
@@ -246,14 +264,13 @@ class CrazyFliesNode(Node):
             out_vel.x = x_dot[i,0]
             out_vel.y = x_dot[i,1]
             out_vel_list.append(out_vel)
-
         return out_vel_list
     
     def combine_vel(self,reynold,consensus):
         out_vel = Point()
         out_vel.x = reynold.x + consensus.x
         out_vel.y = reynold.y + consensus.y
-        return out_vel
+        return self.agent_list[0].limit_vel(out_vel)
             
     ###############################################
     ###### Other functions
@@ -283,7 +300,7 @@ class CrazyFliesNode(Node):
             if self.num_agents < 4:
                 self.get_logger().error("Agent not enough for Rectangle formation")
                 return list(formation)
-            w = 1.0
+            w = 1.5
             # fill out the corner 
             formation[0] = [0,0]
             formation[1] = [w,0]
@@ -298,7 +315,7 @@ class CrazyFliesNode(Node):
             if self.num_agents < 3:
                 self.get_logger().error("Agent not enough for Triangle formation")
                 return list(formation)
-            w = 1.0
+            w = 2.0
             # fill out the corner 
             formation[0] = [0,0]
             formation[1] = [w,-w]
@@ -325,8 +342,6 @@ class CrazyFliesNode(Node):
             self.visualize_connections()
             if self.protocol != "Flocking" and self.protocol != "Rendezvous":
                 self.visualize_formation()
-            print(self.neighbor_list)
-            print(self.A_matrix)
             
             self.visual_pub.publish(self.visualize_array)
             self.visualize_array = MarkerArray()
@@ -370,8 +385,8 @@ class CrazyFliesNode(Node):
         for i in range(self.num_agents):
             for j in range(self.num_agents):
                 if self.A_matrix[i][j] == 1:
-                    points.append([self.agent_list[i].position.x ,self.agent_list[i].position.y ,0.0])
-                    points.append([self.agent_list[j].position.x ,self.agent_list[j].position.y,0.0])
+                    points.append([self.agent_list[i].position.x ,self.agent_list[i].position.y ,self.agent_list[i].position.z])
+                    points.append([self.agent_list[j].position.x ,self.agent_list[j].position.y,self.agent_list[i].position.z])
 
         marker = self.create_marker(222,ns, Marker.LINE_LIST, [0.0,0.0,0.0], 
                 [0.04,0.04,0.04], [0.0,0.0,1.0,1.0], frame_id, points)
@@ -383,11 +398,10 @@ class CrazyFliesNode(Node):
 
         points = []
         for i in range(self.num_agents-1):
-            points.append([self.formation[i][0] + self.agent_list[0].position.x ,self.formation[i][1] +self.agent_list[0].position.y ,0.0])
-            points.append([self.formation[i+1][0] + self.agent_list[0].position.x ,self.formation[i+1][1] +self.agent_list[0].position.y ,0.0])
-        points.append([self.formation[-1][0] + self.agent_list[0].position.x ,self.formation[-1][1] +self.agent_list[0].position.y ,0.0])
-        points.append([self.formation[0][0] + self.agent_list[0].position.x ,self.formation[0][1] +self.agent_list[0].position.y ,0.0])
-        print(points)
+            points.append([self.formation[i][0] + self.agent_list[0].position.x ,self.formation[i][1] +self.agent_list[0].position.y ,self.agent_list[i].position.z])
+            points.append([self.formation[i+1][0] + self.agent_list[0].position.x ,self.formation[i+1][1] +self.agent_list[0].position.y ,self.agent_list[i].position.z])
+        points.append([self.formation[-1][0] + self.agent_list[0].position.x ,self.formation[-1][1] +self.agent_list[0].position.y ,self.agent_list[i].position.z])
+        points.append([self.formation[0][0] + self.agent_list[0].position.x ,self.formation[0][1] +self.agent_list[0].position.y ,self.agent_list[i].position.z])
         marker = self.create_marker(787,ns, Marker.LINE_LIST, [0.0,0.0,0.0], 
                 [0.04,0.04,0.04], [0.0,1.0,0.0,1.0], frame_id, points)
         self.visualize_array.markers.append(marker)
