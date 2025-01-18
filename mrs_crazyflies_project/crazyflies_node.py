@@ -80,7 +80,7 @@ class CrazyFliesNode(Node):
         self.map_publisher = self.create_publisher(OccupancyGrid, '/map_field', 10)
 
         # Formation related Variable
-        self.protocol = "Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
+        self.protocol = "Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line", "Pentagon", "Hexagon"
         self.use_fixed_connection = True
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
@@ -368,10 +368,42 @@ class CrazyFliesNode(Node):
                 
             return list(formation)
         elif protocol == "Line":
+            if self.num_agents < 2:
+                self.get_logger().error("Agent not enough for Line formation")
+                return list(formation)
+            l = 0
+            for i in range(self.num_agents):
+                formation[i] = [0,l]
+                l = l - 0.4
+            # put the rest in between
             # TODO
             return list(formation)
+        elif protocol == "Pentagon":
+            if self.num_agents < 5:
+                self.get_logger().error("Agent not enough for Pentagon formation")
+                return list(formation)
+            formation[0] = [0.0, 0.0]                    # First vertex (corner) at (0,0)
+            formation[1] = [0.1314, 0.4045]              # Second vertex
+            formation[2] = [-0.3441, 0.25]               # Third vertex
+            formation[3] = [-0.3441, -0.25]              # Fourth vertex
+            formation[4] = [0.1314, -0.4045]            # Fifth formation[]
+            
+
+
+        elif protocol == "Hexagon":
+            if self.num_agents < 6:
+                self.get_logger().error("Agent not enough for Hexagon formation")
+                return list(formation)
+            formation[0] = [0.0, 0.0]                  # First formation[] (corner) at (0,0)
+            formation[1] = [0.1443, 0.25]              # Second formation[]
+            formation[2] = [-0.1443, 0.25]             # Third formation[]
+            formation[3] = [-0.2887, 0.0]              # Fourth formation[]
+            formation[4] = [-0.1443, -0.25]            # Fifth formation[]
+            formation[5] = [0.1443, -0.25]             # Sixth vertex
+            return list(formation)     
         else:
             return list(formation)
+
         
     ###############################################
     ###### Visualization
