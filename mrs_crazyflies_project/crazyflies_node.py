@@ -309,8 +309,12 @@ class CrazyFliesNode(Node):
     
     def combine_vel(self,reynold,consensus):
         out_vel = Point()
-        out_vel.x = reynold.x + consensus.x
-        out_vel.y = reynold.y + consensus.y
+        if np.linalg.norm([reynold.x,reynold.y]) > 0.4:
+            out_vel.x = reynold.x 
+            out_vel.y = reynold.y 
+        else:
+            out_vel.x = reynold.x + consensus.x
+            out_vel.y = reynold.y + consensus.y
 
         return self.agent_list[0].limit_vel(out_vel)
             
