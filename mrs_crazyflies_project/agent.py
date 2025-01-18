@@ -6,10 +6,15 @@ import numpy as np
 
 from .utils.OccupancyMap import OccupancyMap
 from .utils.SteerToAvoid import SteerToAvoid
+
+import rclpy
+from rclpy.node import Node
 def wrap_angle(ang):
     return ang + (2.0 * np.pi * np.floor((np.pi - ang) / (2.0 * np.pi)))
 class Agent:
-    def __init__(self,id = 0):
+    def __init__(self, node: Node,id = 0):
+        self.logger = node.get_logger()
+        
         # Initialize Boid's state
         self.id = id
         self.position = Point()
@@ -32,13 +37,13 @@ class Agent:
         self.max_acc = 3.0
         self.max_vel = 0.5
         self.min_vel = 0.0
-        self.nav_gain = 0.8  # Navigation gain, controls the strength of the navigation behavior
+        self.nav_gain = 0.2  # Navigation gain, controls the strength of the navigation behavior
         self.neighbor_range = 100.0# 1.2
         self.neightbor_angle = np.pi/1
         self.seperation_range = 0.03
         # [10.0,0.8,1.5,0.5,2.0,0.5] #[6.3,1.5,1.5,0.5,1.4,0.5]
         # self.weight_list = [7.0,1.4,1.5,0.4,1.4,0.5]
-        self.weight_list = [6.6,1.8,1.5,0.4,1.4,0.5]
+        self.weight_list = [0.0,1.8,1.5,0.4,1.4,0.5]
         self.acc_pool = 6.65
 
         # weight_list = [2.0,2.0,1.5,0.5,6.3,1.5]
@@ -79,8 +84,7 @@ class Agent:
         # print("______________")
         # print(map_crop[22, :])
         self.obs_acc.update_map(self.perception_field)
-    
-    
+
     ##################################################
     #### Acceleration calculation
     ##################################################
@@ -186,11 +190,13 @@ class Agent:
         boid_pose   = [0.0, 0.0]
         boid_vel    = [self.velocity.x, self.velocity.y]
         # boid_vel    = [0.8, 0.0]
+        
         b = self.obs_acc._steer_to_avoid(boid_pose, boid_vel)
-        a = 1
+        # self.logger.info(f"Debug! Velocity X: {self.velocity.y}")
+        
         combined_acc = Point()
-        combined_acc.x = b[0] 
-        combined_acc.y = b[1] 
+        combined_acc.x = b[0]  * 0.1
+        combined_acc.y = b[1]  * 0.1
         return combined_acc
 
     def navigation_acc(self):
@@ -203,7 +209,7 @@ class Agent:
 
             nav_acc.x = nav_vel.x - self.velocity.x
             nav_acc.y = nav_vel.y - self.velocity.y
-        return self.limit_acc(nav_acc)
+        return self.limit_vel(nav_vel)
     
     def _arrival(self):
         ''' Computes required acceleration for the boid to arrive at the goal.'''
@@ -242,9 +248,6 @@ class Agent:
         combined_acc.x = nav_acc.x  + 10*allign_acc.x + sep_acc.x + 0.2*coh_acc.x 
         combined_acc.y = nav_acc.y  + 10*allign_acc.y + sep_acc.y + 0.2*coh_acc.y 
 
-        # combined_acc.x = nav_acc.x  
-        # combined_acc.y = nav_acc.y  
-
         # rospy.loginfo("nav,coh,allign,sep,obs,com [x]: {},{},{},{},{}".format(nav_acc.x,coh_acc.x, allign_acc.x, sep_acc.x, obs_acc.x,combined_acc.x))
         # rospy.loginfo("nav,coh,allign,sep,obs,com [y]: {},{},{},{},{}".format(nav_acc.y,coh_acc.y, allign_acc.y, sep_acc.y, obs_acc.y,combined_acc.y))
 
@@ -270,8 +273,9 @@ class Agent:
         
        
         # print("----")
+        # self.logger.info(f"Debug! Velocity X: {nav_acc.x*0.4:.3f}, Obs X: {obs_acc.x*6.3:.3f}, Velocity Y: {nav_acc.y*0.4:.3f}, Obs Y: {obs_acc.y*6.3:.3f}")
 
-        return self.limit_acc(combined_acc)
+        return self.limit_vel(combined_acc)
 
         # combined_acc.x = nav_acc.x  
         # combined_acc.y = nav_acc.y  
@@ -287,11 +291,22 @@ class Agent:
     def cal_velocity(self, acc , dt):
         # Update velocity 
         vel = Point()
-        vel.x = self.velocity.x + (acc.x*dt)
-        vel.y = self.velocity.y + (acc.y*dt)
+        # vel.x = self.velocity.x + (acc.x*dt)
+        # vel.y = self.velocity.y + (acc.y*dt)
 
+        vel.x = acc.x
+        vel.y = acc.y
 
         out_vel = self.limit_vel(vel)
+        return out_vel
+    
+    def add_obs_avoidance(self, vel, obs_acc):
+        out_vel = Point()
+        out_vel.x = vel.x + obs_acc.x
+        out_vel.y = vel.y + obs_acc.y
+
+        self.logger.info(f"Debug! Velocity X: {vel.x}, Obs X: {obs_acc.x}, Velocity Y: {vel.y}, Obs Y: {obs_acc.y},")
+        
         return out_vel
     
     def limit_vel(self,vel):
