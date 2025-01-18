@@ -51,7 +51,7 @@ class CrazyFliesNode(Node):
         
         for i in range(num_agents):
             # add fly to agent list
-            self.agent_list.append(Agent(self, id = i+1))
+            self.agent_list.append(Agent(id = i+1))
             self.trajectory.append(Path())
             self.consensus_vel_list.append(Point())
 
@@ -189,7 +189,7 @@ class CrazyFliesNode(Node):
         sep_acc = self.agent_list[idx].seperation_acc()
         coh_acc = zero
         align_acc = zero
-        obs_acc = self.agent_list[idx].obstacle_acc()
+        obs_acc = zero# self.agent_list[idx].obstacle_acc()
 
         if self.protocol == "Flocking" :
             coh_acc = self.agent_list[idx].cohesion_acc()
