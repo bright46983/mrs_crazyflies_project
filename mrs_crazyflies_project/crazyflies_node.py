@@ -323,14 +323,11 @@ class CrazyFliesNode(Node):
     ###############################################
     def create_A_matrix(self,protocol,connections):
         A_matrix = np.zeros((self.num_agents,self.num_agents))
-        if protocol == "Rendezvous": # fixed A matrix depend on config file
-            for i in range(len(connections)): # each reciving node
-                for c in connections[i]:
-                    if c != 0: 
-                        A_matrix[i][c-1] = 1
-            return A_matrix
-        else: # other protocol will be later updated by neighbor
-            return A_matrix
+        for i in range(len(connections)): # each reciving node
+            for c in connections[i]:
+                if c != 0: 
+                    A_matrix[i][c-1] = 1
+        return A_matrix
         
     # def update_A_from_neighbor(self,neighbors):
     #     A_matrix = np.zeros((self.num_agents,self.num_agents))
@@ -391,9 +388,8 @@ class CrazyFliesNode(Node):
             formation[2] = [-0.3441, 0.25]               # Third vertex
             formation[3] = [-0.3441, -0.25]              # Fourth vertex
             formation[4] = [0.1314, -0.4045]            # Fifth formation[]
-            
-
-
+            return list(formation)
+        
         elif protocol == "Hexagon":
             if self.num_agents < 6:
                 self.get_logger().error("Agent not enough for Hexagon formation")
