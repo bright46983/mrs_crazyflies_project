@@ -81,6 +81,7 @@ class CrazyFliesNode(Node):
 
         # Formation related Variable
         self.protocol = "Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
+        self.use_fixed_connection = True
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
 
@@ -174,7 +175,7 @@ class CrazyFliesNode(Node):
 
     def main_loop(self,idx):
         # update neighbor
-        if not self.neighbor_list == [] and self.protocol != "Rendezvous": 
+        if not self.neighbor_list == []:
             self.agent_list[idx].neighbor_agents = self.neighbor_list[idx]
         # update map for each agent
         self.agent_list[idx].update_perception_field(self.map)
@@ -222,26 +223,27 @@ class CrazyFliesNode(Node):
         self.vel_pub_list[idx].publish(vel_msg)
 
     def neighbor_loop(self):
-        if self.protocol != "Rendezvous":
-            neighbor_list = []
-            A_matrix = np.zeros((self.num_agents,self.num_agents))
-            for i in range(len(self.agent_list)):
-                neighbor = []
-                others_agent = self.agent_list.copy()
-                agent = others_agent.pop(i)
-                for o_agent in others_agent:
-                    dis = np.linalg.norm(np.array([agent.position.x, agent.position.y])-np.array([o_agent.position.x, o_agent.position.y]))
-                    ang = abs(wrap_angle(agent.heading - np.arctan2( o_agent.position.y - agent.position.y, o_agent.position.x- agent.position.x)))
-                    if dis < agent.neighbor_range and ang < agent.neightbor_angle:
-                        neighbor.append(o_agent)
-                        A_matrix[i][o_agent.id-1] = 1
-                neighbor_list.append(neighbor)
-                
+        neighbor_list = []
+        A_matrix = np.zeros((self.num_agents,self.num_agents))
+        for i in range(len(self.agent_list)):
+            neighbor = []
+            others_agent = self.agent_list.copy()
+            agent = others_agent.pop(i)
+            for o_agent in others_agent:
+                dis = np.linalg.norm(np.array([agent.position.x, agent.position.y])-np.array([o_agent.position.x, o_agent.position.y]))
+                ang = abs(wrap_angle(agent.heading - np.arctan2( o_agent.position.y - agent.position.y, o_agent.position.x- agent.position.x)))
+                if dis < agent.neighbor_range and ang < agent.neightbor_angle:
+                    neighbor.append(o_agent)
+                    A_matrix[i][o_agent.id-1] = 1
+            neighbor_list.append(neighbor)
+
+        self.neighbor_list = neighbor_list
+        if self.protocol != "Rendezvous" and not self.use_fixed_connection: 
             A_matrix[0,:] = 0
             self.A_matrix = A_matrix
-            self.neighbor_list = neighbor_list
-            # stubborn agent
-            # self.A_matrix[0,:] = 0
+            
+        # stubborn agent
+        # self.A_matrix[0,:] = 0
 
     def consensus_loop(self):
         if self.protocol == "Rendezvous":
