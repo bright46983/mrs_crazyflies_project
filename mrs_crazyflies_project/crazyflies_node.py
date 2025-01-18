@@ -2,12 +2,16 @@ import rclpy
 from rclpy.node import Node
 from functools import partial
 
-from geometry_msgs.msg import Twist, PoseStamped, Pose, Point
+from geometry_msgs.msg import Twist, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import String
-from nav_msgs.msg import OccupancyGrid, Path
+from nav_msgs.msg import OccupancyGrid, Path, MapMetaData
 from visualization_msgs.msg import Marker, MarkerArray
 from .utils.OccupancyMap import OccupancyMap
 from nav2_msgs.srv import LoadMap
+
+import yaml
+import cv2
+from std_msgs.msg import Header
 
 from .agent import Agent
 from crazyflie_interfaces.msg import LogDataGeneric
@@ -40,14 +44,14 @@ class CrazyFliesNode(Node):
         self.num_leaders = 1
         self.consensus_vel_list = []
 
-    
         # create a list of publisher, subscriber for each fly
         self.vel_pub_list = []
         self.traj_pub_list = []
         self.connection_list = []
+        
         for i in range(num_agents):
             # add fly to agent list
-            self.agent_list.append(Agent(id = i+1))
+            self.agent_list.append(Agent(self, id = i+1))
             self.trajectory.append(Path())
             self.consensus_vel_list.append(Point())
 
@@ -74,12 +78,33 @@ class CrazyFliesNode(Node):
         self.create_subscription(PoseStamped, '/goal_pose',self.goal_cb,10)
         self.visual_pub = self.create_publisher(MarkerArray,'/cf/visualize',10)
         
+        self.map_publisher = self.create_publisher(OccupancyGrid, '/map_field', 10)
 
         # Formation related Variable
         self.protocol = "Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
 
+        map_yaml_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/test_10x10/test_10x10.yaml'
+        map_image_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/test_10x10/test_10x10.bmp'
+        occupancy_map = self.load_map(map_yaml_path, map_image_path)
+
+        self.map = OccupancyMap()
+        env = np.array(occupancy_map.data).reshape(occupancy_map.info.height, occupancy_map.info.width).T
+
+        # Set avoid obstacles - The steer to avoid behavior (IN THE DICTIONARY) requires the map, resolution, and origin
+        self.map.set(data=env, 
+                    resolution=occupancy_map.info.resolution, 
+                    origin=[occupancy_map.info.origin.position.x, occupancy_map.info.origin.position.y])
+        
+
+        self.perception_field_publisher = self.create_publisher(OccupancyGrid, '/perception_field', 10)
+        self.grid_map_publisher = self.create_publisher(OccupancyGrid, '/grid_map', 10)
+        
+        # Use a lambda to pass the map loading function
+        self.map_timer = self.create_timer(1.0, lambda: self.load_map(map_yaml_path, map_image_path))
+        # self.perception_timer = self.create_timer(1.0, lambda: self.publish_perception_field(self.map))
+        self.grid_map_timer = self.create_timer(1.0, lambda: self.publish_grid_map(occupancy_map))
 
         time.sleep(3)
         self.get_logger().info("waiting for takng off...")
@@ -88,10 +113,10 @@ class CrazyFliesNode(Node):
             takeoff_vel.linear.x = 0.0
             vel_pub.publish(takeoff_vel)
 
+
         time.sleep(5)
 
         self.get_logger().info("finished takng off...")
-
 
         self.dt = 0.05  # seconds
     
@@ -102,7 +127,41 @@ class CrazyFliesNode(Node):
         self.create_timer(self.dt, self.neighbor_loop)
         self.create_timer(0.5, self.visualize)
 
-        
+    def publish_perception_field(self, perception_field:OccupancyMap):
+        # Create and populate the OccupancyGrid message
+        grid = OccupancyGrid()
+        grid.header.stamp = self.get_clock().now().to_msg()
+        grid.header.frame_id = "world"  # Make sure this matches your TF frames
+        grid.info = MapMetaData()
+        grid.info.resolution = perception_field.resolution
+        grid.info.width = perception_field.map_dim[1]
+        grid.info.height = perception_field.map_dim[0]
+        # self.get_logger().info(f"Shape: {grid.info.width}, {grid.info.height}")
+
+
+        # Set origin
+        pose = Pose()
+        pose.position.x = float(perception_field.origin[0])
+        pose.position.y = float(perception_field.origin[1])
+        pose.position.z = 0.0
+        pose.orientation.x = 0.0
+        pose.orientation.y = 0.0
+        pose.orientation.z = 0.0
+        pose.orientation.w = 1.0
+        grid.info.origin = pose
+
+        a = perception_field.map.T
+        a = a.flatten()
+        grid.data = a.astype(int).tolist()
+
+        # Publish the map
+        self.perception_field_publisher.publish(grid)
+        # self.get_logger().info('Map published with vertical flip!')
+    
+    def publish_grid_map(self, occupancy_map:OccupancyGrid):
+        # Publish the map
+        self.grid_map_publisher.publish(occupancy_map)
+
     ###############################################
     ###### Callback
     ###############################################
@@ -132,25 +191,31 @@ class CrazyFliesNode(Node):
                     resolution=gridmap.info.resolution, 
                     origin=[gridmap.info.origin.position.x, gridmap.info.origin.position.y])
         self.map_recieved = True
+        print("I got it, sir!!!")
     ###############################################
     ###### Timer loop
     ###############################################
 
     def main_loop(self,idx):
-        
         # update neighbor
         if not self.neighbor_list == [] and self.protocol != "Rendezvous": 
             self.agent_list[idx].neighbor_agents = self.neighbor_list[idx]
         # update map for each agent
-        # self.agent_list[idx].update_perception_field(self.map)
+        self.agent_list[idx].update_perception_field(self.map)
+        # self.publish_perception_field(self.agent_list[idx].perception_field)
+        # self.get_logger().info(f"Shape: {self.agent_list[idx].perception_field.map[40,40]}")
 
         # Reynold 
         zero = Point()
-        nav_acc = self.agent_list[idx].navigation_acc()
+        if idx == 0:
+            nav_acc = self.agent_list[idx].navigation_acc()
+        else:
+            nav_acc = zero
+
         sep_acc = self.agent_list[idx].seperation_acc()
         coh_acc = zero
         align_acc = zero
-        obs_acc = zero
+        obs_acc = self.agent_list[idx].obstacle_acc()
         # obs_acc = self.agent_list[idx].obstacle_acc()
 
         if self.protocol == "Flocking" :
@@ -164,6 +229,8 @@ class CrazyFliesNode(Node):
 
         reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt)
 
+        # reynold_vel = self.agent_list[idx].add_obs_avoidance(nav_vel, obs_acc)
+
         # Consensus
         consensus_vel = zero
         if self.protocol != "Flocking":
@@ -173,9 +240,12 @@ class CrazyFliesNode(Node):
         if  self.agent_list[idx].goal != None:
             consensus_vel = zero
 
-        print(consensus_vel)
+        # print(consensus_vel)
             
         # combine velocity (Reynold + Consensus)
+        if idx == 2:
+            self.get_logger().info(f"Debug! reynold_vel X: {reynold_vel.x:.3f}, consensus_vel X: {consensus_vel.x:.3f}, reynold_vel Y: {reynold_vel.y:.3f}, consensus_vel Y: {consensus_vel.y:.3f}")
+
         out_vel = self.combine_vel(reynold_vel ,consensus_vel)
         # publish        
         vel_msg = Twist()
@@ -204,6 +274,11 @@ class CrazyFliesNode(Node):
             self.neighbor_list = neighbor_list
             # stubborn agent
             # self.A_matrix[0,:] = 0
+        # print("A_matrix:")
+        # print(A_matrix[0,0],A_matrix[0,1],A_matrix[0,2],A_matrix[0,3])
+        # print(A_matrix[1,0],A_matrix[1,1],A_matrix[1,2],A_matrix[1,3])
+        # print(A_matrix[2,0],A_matrix[2,1],A_matrix[2,2],A_matrix[2,3])
+        # print(A_matrix[3,0],A_matrix[3,1],A_matrix[3,2],A_matrix[3,3])
 
     def consensus_loop(self):
         if self.protocol == "Rendezvous":
@@ -220,6 +295,13 @@ class CrazyFliesNode(Node):
         L = np.diag(L_diag)
         # fill in the rest of the elements of L
         L -= A
+        L = L/4
+        # print("L_matrix:")
+        # print(L[0,0],L[0,1],L[0,2],L[0,3])
+        # print(L[1,0],L[1,1],L[1,2],L[1,3])
+        # print(L[2,0],L[2,1],L[2,2],L[2,3])
+        # print(L[3,0],L[3,1],L[3,2],L[3,3])
+
         return L
     
     def cal_rendezvous_vel(self,agents_list, A):
@@ -270,6 +352,12 @@ class CrazyFliesNode(Node):
         out_vel = Point()
         out_vel.x = reynold.x + consensus.x
         out_vel.y = reynold.y + consensus.y
+
+        # out_vel.x = consensus.x
+        # out_vel.y = consensus.y
+
+        # out_vel.x = reynold.x
+        # out_vel.y = reynold.y
         return self.agent_list[0].limit_vel(out_vel)
             
     ###############################################
@@ -448,13 +536,72 @@ class CrazyFliesNode(Node):
 
         return marker
 
+    def load_map(self, yaml_path, image_path):
+        with open(yaml_path, 'r') as file:
+            map_data = yaml.safe_load(file)
         
+        resolution = map_data['resolution']
+        origin = map_data['origin']
+        negate = map_data['negate']
+        
+        # Read and optionally negate the map image
+        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        if not negate:
+            image = 255 - image
+
+        # Flip the image vertically
+        image = np.flipud(image)
+
+        # Convert the image to an occupancy grid (-1: unknown, 0: free, 100: occupied)
+        occupancy_map = (image / 255.0).flatten()
+        occupancy_map = np.where(occupancy_map > map_data['occupied_thresh'], 100,
+                                np.where(occupancy_map < map_data['free_thresh'], 0, -1))
+
+        # Create and populate the OccupancyGrid message
+        grid = OccupancyGrid()
+        grid.header.stamp = self.get_clock().now().to_msg()
+        grid.header.frame_id = "world"  # Make sure this matches your TF frames
+        grid.info = MapMetaData()
+        grid.info.resolution = resolution
+        grid.info.width = image.shape[1]
+        grid.info.height = image.shape[0]
+
+        # Set origin
+        pose = Pose()
+        pose.position.x = float(origin[0])
+        pose.position.y = float(origin[1])
+        pose.position.z = 0.0
+        pose.orientation.x = 0.0
+        pose.orientation.y = 0.0
+        pose.orientation.z = 0.0
+        pose.orientation.w = 1.0
+        grid.info.origin = pose
+
+        grid.data = occupancy_map.astype(int).tolist()
+
+        # Publish the map
+        self.map_publisher.publish(grid)
+        # self.get_logger().info('Map published with vertical flip!')
+
+        return grid
+
 
 
 def main(args=None):
     rclpy.init(args=args)
 
+    # map_yaml_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/test_10x10/test_10x10.yaml'
+    # map_image_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/test_10x10/test_10x10.bmp'
+    # occupancy_map = load_map(map_yaml_path, map_image_path)
+
+    # # Print the occupancy grid data
+    # print("Occupancy Map Data:")
+    # for y in range(50,90):
+    #     row = occupancy_map.data[y * 40:(y + 1) * 40]
+    #     print(row)
+
     cfn = CrazyFliesNode(4)
+
 
     rclpy.spin(cfn)
 
