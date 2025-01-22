@@ -41,7 +41,7 @@ class CrazyFliesNode(Node):
         self.agent_list = []
         self.trajectory = []
         self.neighbor_list = [] # list of list of agents [[agent1,agent2], [agent4],....]
-        self.num_leaders = 1
+        self.num_leaders = 3
         self.consensus_vel_list = []
 
         # create a list of publisher, subscriber for each fly
@@ -80,12 +80,13 @@ class CrazyFliesNode(Node):
         self.map_publisher = self.create_publisher(OccupancyGrid, '/map_field', 10)
 
         # Formation related Variable
-        self.protocol = "Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line"
+        self.protocol = "Flocking" #"Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line", "Pentagon", "Hexagon"
+        self.use_fixed_connection = True
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
 
-        map_yaml_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/test_10x10/test_10x10.yaml'
-        map_image_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/test_10x10/test_10x10.bmp'
+        map_yaml_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/simple_maze_10x10/simple_maze_10x10.yaml'
+        map_image_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/simple_maze_10x10/simple_maze_10x10.bmp'
         occupancy_map = self.load_map(map_yaml_path, map_image_path)
 
         self.map = OccupancyMap()
@@ -173,23 +174,24 @@ class CrazyFliesNode(Node):
     ###############################################
 
     def main_loop(self,idx):
+        # self.get_logger().info(f"Debug! agent number: {idx:.1f}")
         # update neighbor
-        if not self.neighbor_list == [] and self.protocol != "Rendezvous": 
+        if not self.neighbor_list == []: 
             self.agent_list[idx].neighbor_agents = self.neighbor_list[idx]
         # update map for each agent
         self.agent_list[idx].update_perception_field(self.map)
 
         # Reynold 
         zero = Point()
-        if idx == 0:
-            nav_acc = self.agent_list[idx].navigation_acc()
-        else:
-            nav_acc = zero
+        # if idx == 0:
+        nav_acc = self.agent_list[idx].navigation_acc()
+        # else:
+            # nav_acc = zero
 
         sep_acc = self.agent_list[idx].seperation_acc()
         coh_acc = zero
         align_acc = zero
-        obs_acc = zero# self.agent_list[idx].obstacle_acc()
+        obs_acc = zero#self.agent_list[idx].obstacle_acc()
 
         if self.protocol == "Flocking" :
             coh_acc = self.agent_list[idx].cohesion_acc()
@@ -199,6 +201,7 @@ class CrazyFliesNode(Node):
 
         all_acc = self.agent_list[idx].combine_acc_priority(nav_acc,sep_acc,coh_acc,align_acc,obs_acc)    
 
+        # reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt,obs_acc)
         reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt)
 
         # Consensus
@@ -222,24 +225,26 @@ class CrazyFliesNode(Node):
         self.vel_pub_list[idx].publish(vel_msg)
 
     def neighbor_loop(self):
-        if self.protocol != "Rendezvous":
-            neighbor_list = []
-            A_matrix = np.zeros((self.num_agents,self.num_agents))
-            for i in range(len(self.agent_list)):
-                neighbor = []
-                others_agent = self.agent_list.copy()
-                agent = others_agent.pop(i)
-                for o_agent in others_agent:
-                    dis = np.linalg.norm(np.array([agent.position.x, agent.position.y])-np.array([o_agent.position.x, o_agent.position.y]))
-                    ang = abs(wrap_angle(agent.heading - np.arctan2( o_agent.position.y - agent.position.y, o_agent.position.x- agent.position.x)))
-                    if dis < agent.neighbor_range and ang < agent.neightbor_angle:
-                        neighbor.append(o_agent)
-                        A_matrix[i][o_agent.id-1] = 1
-                neighbor_list.append(neighbor)
-                
+        neighbor_list = []
+        A_matrix = np.zeros((self.num_agents,self.num_agents))
+        for i in range(len(self.agent_list)):
+            neighbor = []
+            others_agent = self.agent_list.copy()
+            agent = others_agent.pop(i)
+            for o_agent in others_agent:
+                dis = np.linalg.norm(np.array([agent.position.x, agent.position.y])-np.array([o_agent.position.x, o_agent.position.y]))
+                ang = abs(wrap_angle(agent.heading - np.arctan2( o_agent.position.y - agent.position.y, o_agent.position.x- agent.position.x)))
+                if dis <= agent.neighbor_range and ang <= agent.neightbor_angle:
+                    neighbor.append(o_agent)
+                    A_matrix[i][o_agent.id-1] = 1
+            neighbor_list.append(neighbor)
+            
+        
+        self.neighbor_list = neighbor_list
+        if self.protocol != "Rendezvous" and not self.use_fixed_connection: 
             A_matrix[0,:] = 0
             self.A_matrix = A_matrix
-            self.neighbor_list = neighbor_list
+            
             # stubborn agent
             # self.A_matrix[0,:] = 0
 
@@ -258,7 +263,7 @@ class CrazyFliesNode(Node):
         L = np.diag(L_diag)
         # fill in the rest of the elements of L
         L -= A
-        L = L/4
+        L = L/self.num_agents
         return L
     
     def cal_rendezvous_vel(self,agents_list, A):
@@ -317,14 +322,15 @@ class CrazyFliesNode(Node):
     ###############################################
     def create_A_matrix(self,protocol,connections):
         A_matrix = np.zeros((self.num_agents,self.num_agents))
-        if protocol == "Rendezvous": # fixed A matrix depend on config file
-            for i in range(len(connections)): # each reciving node
-                for c in connections[i]:
-                    if c != 0: 
-                        A_matrix[i][c-1] = 1
-            return A_matrix
-        else: # other protocol will be later updated by neighbor
-            return A_matrix
+        # if protocol == "Rendezvous": # fixed A matrix depend on config file
+        for i in range(len(connections)): # each reciving node
+            for c in connections[i]:
+                if c != 0: 
+                    A_matrix[i][c-1] = 1
+
+        return A_matrix
+        # else: # other protocol will be later updated by neighbor
+        #     return A_matrix
         
     # def update_A_from_neighbor(self,neighbors):
     #     A_matrix = np.zeros((self.num_agents,self.num_agents))
@@ -357,16 +363,59 @@ class CrazyFliesNode(Node):
                 return list(formation)
             w = 2.0
             # fill out the corner 
-            formation[0] = [0,0]
-            formation[1] = [w,-w]
-            formation[3] = [-w,-w]
+            formation[0] = [0.0,0.0]
+            # formation[1] = [w,-w]
+            # formation[2] = [-w,-w]
+            formation[1] = [-3.0,0.0]
+            formation[2] = [-1.5,3*0.866]
             # put the rest in between
             # TODO
-            formation[2] = [0,-w] # menawhile just put in between
+            # formation[2] = [0,-w] # menawhile just put in between
                 
             return list(formation)
         elif protocol == "Line":
+            if self.num_agents < 2:
+                self.get_logger().error("Agent not enough for Line formation")
+                return list(formation)
+            l = 0
+            for i in range(self.num_agents):
+                formation[i] = [0,l]
+                l = l - 0.4
+            # put the rest in between
             # TODO
+            return list(formation)
+        elif protocol == "Pentagon":
+            if self.num_agents < 5:
+                self.get_logger().error("Agent not enough for Pentagon formation")
+                return list(formation)
+            formation[0] = [0.0, 0.0]                    # First vertex (corner) at (0,0)
+            formation[1] = [-0.5878,0.8090]              # Second vertex
+            formation[2] = [-1.5388,0.5000]               # Third vertex
+            formation[3] = [-1.5388,-0.5000]              # Fourth vertex
+            formation[4] = [-0.5878,-0.8090]            # Fifth formation[]
+            return list(formation)
+        
+        elif protocol == "Hexagon":
+            if self.num_agents < 6:
+                self.get_logger().error("Agent not enough for Hexagon formation")
+                return list(formation)
+            formation[0] = [0.0, 0.0]                  # First formation[] (corner) at (0,0)
+            formation[1] = [0.8666,-0.5000]              # Second formation[]
+            formation[2] = [0.8666,-1.5000]             # Third formation[]
+            formation[3] = [0.0000,-2.0000]              # Fourth formation[]
+            formation[4] = [-0.8666,-1.5000]            # Fifth formation[]
+            formation[5] = [-0.8666,-0.5000]             # Sixth vertex
+            return list(formation)     
+        elif protocol == "Circle":
+            if self.num_agents < 8:
+                self.get_logger().error("Agent not enough for circle formation")
+                return list(formation)
+            for i in range(8):  # A hexagon has 10 vertices
+                angle = np.pi/2 + 2 * np.pi * i / 8  # Divide the circle into 6 equal parts
+                r = 1.2
+                x = r * np.cos(angle)
+                y = r - r * np.sin(angle)
+                formation[i] = [x, y]
             return list(formation)
         else:
             return list(formation)
@@ -379,7 +428,7 @@ class CrazyFliesNode(Node):
             self.visualize_goal()
             #self.visualize_acc()
             self.update_trajectory()
-            self.visualize_connections()
+            # self.visualize_connections()
             if self.protocol != "Flocking" and self.protocol != "Rendezvous":
                 self.visualize_formation()
             
@@ -536,7 +585,7 @@ class CrazyFliesNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    cfn = CrazyFliesNode(4)
+    cfn = CrazyFliesNode(3)
 
     rclpy.spin(cfn)
 

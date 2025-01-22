@@ -29,17 +29,21 @@ class Agent:
         self.velocity.y = 0.0
 
         #tuning params
-        self.max_acc = 3.0
+        self.max_acc = 8.0
         self.max_vel = 0.5
+        # self.max_acc = 3.0
+        # self.max_vel = 0.5
         self.min_vel = 0.0
-        self.nav_gain = 0.2  # Navigation gain, controls the strength of the navigation behavior
-        self.neighbor_range = 100.0# 1.2
+        self.nav_gain = 0.6  # Navigation gain, controls the strength of the navigation behavior 0.2
+        self.neighbor_range =  1.2 # 2.0#
         self.neightbor_angle = np.pi/1
-        self.seperation_range = 0.03
+        self.seperation_range = 0.25
         # [10.0,0.8,1.5,0.5,2.0,0.5] #[6.3,1.5,1.5,0.5,1.4,0.5]
         # self.weight_list = [7.0,1.4,1.5,0.4,1.4,0.5]
-        self.weight_list = [1.0,1.8,1.5,0.4,1.4,0.5]
-        self.acc_pool = 6.65
+        # [obs_acc, sep_acc, arr_acc,nav_acc,allign_acc,coh_acc] ---- [6.0, 1.0, 1.5, 0.4, 1.4, 0.5]
+        self.weight_list = [0.0, 2.4, 1.5, 0.4, 1.4, 0.6]
+        # self.weight_list = [0.0,1.0,1.5,0.4,1.4,0.5]
+        self.acc_pool = 3.65
 
         # weight_list = [2.0,2.0,1.5,0.5,6.3,1.5]
         # weight_list = [1.0,1.0,2.0,1.5,6.3,1.5]
@@ -48,7 +52,7 @@ class Agent:
         self.neighbor_agents = []
 
 
-        self.obs_acc = SteerToAvoid(0.8, 0.5, 6.28) #0.6,  0.174533 # stabel [0.8,0.5]
+        self.obs_acc = SteerToAvoid(1.0, 0.5, 6.28) #0.6,  0.174533 # stabel [0.8,0.5]
 
     # def update_velocity(self, vel ):
     #     # Update velocity 
@@ -268,7 +272,7 @@ class Agent:
        
         # print("----")
 
-        return self.limit_vel(combined_acc)
+        return self.limit_acc(combined_acc)
 
         # combined_acc.x = nav_acc.x  
         # combined_acc.y = nav_acc.y  
@@ -281,17 +285,32 @@ class Agent:
     ##################################################
     #### helper functions
     ##################################################
-    def cal_velocity(self, acc , dt):
+    def cal_velocity(self, acc , dt, obs_vel):
         # Update velocity 
         vel = Point()
-        # vel.x = self.velocity.x + (acc.x*dt)
-        # vel.y = self.velocity.y + (acc.y*dt)
+        vel.x = obs_vel.x*0.5
+        vel.y = obs_vel.y*0.5
 
-        vel.x = acc.x
-        vel.y = acc.y
+        if np.linalg.norm([vel.x,vel.y]) < self.max_vel*0.6:
+            vel.x = vel.x + self.velocity.x + (acc.x*dt)
+            vel.y = vel.y + self.velocity.y + (acc.y*dt)
+
+        # vel.x = acc.x
+        # vel.y = acc.y
 
         out_vel = self.limit_vel(vel)
         return out_vel
+    
+    def cal_velocity(self, acc , dt):
+        # Update velocity 
+        vel = Point()
+
+        vel.x = vel.x + self.velocity.x + (acc.x*dt)
+        vel.y = vel.y + self.velocity.y + (acc.y*dt)
+
+        out_vel = self.limit_vel(vel)
+        return out_vel
+    
     
     def limit_vel(self,vel):
         # Limit the vel of the boid to avoid it moving too fast
