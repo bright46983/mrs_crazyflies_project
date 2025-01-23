@@ -4,6 +4,7 @@ from functools import partial
 
 from geometry_msgs.msg import Twist, PoseStamped, Pose, Point, Quaternion
 from std_msgs.msg import String
+from std_srvs.srv import Trigger, SetBool
 from nav_msgs.msg import OccupancyGrid, Path, MapMetaData
 from visualization_msgs.msg import Marker, MarkerArray
 from .utils.OccupancyMap import OccupancyMap
@@ -100,6 +101,21 @@ class CrazyFliesNode(Node):
 
         self.perception_field_publisher = self.create_publisher(OccupancyGrid, '/perception_field', 10)
 
+        # formation service
+        self.seq = ["Triangle","Line","Line2"]
+        self.seq_idx = 0
+        self.form_srv = self.create_service(Trigger, 'change_formation', self.change_formation)
+        
+        # stop service
+        self.enable = True
+        self.enable_srv = self.create_service(SetBool, 'enable_cf', self.enable)
+
+        #landing service
+        self.enable_srv = self.create_service(Trigger, 'landing_cf', self.landing)
+
+        
+
+
         time.sleep(3)
         self.get_logger().info("waiting for takng off...")
         for vel_pub in self.vel_pub_list:
@@ -168,61 +184,91 @@ class CrazyFliesNode(Node):
     def goal_cb(self, msg):
         for i in range(self.num_leaders):
             self.agent_list[i].goal = msg.pose.position
+    
+    def change_formation(self,req,res):
+        
+        self.formation = self.create_formation(self.seq[self.seq_idx])
+        self.seq_idx = (self.seq_idx + 1) % 3
+        return res
+    
+    def enable(self,req,res):
+        self.get_logger().info("Enable cf:{}".format(req.data))
+        self.enable = req.data
+        return res
+    
+    def landing(self,req,res):
+        self.get_logger().info("Landing cf ....")
+        self.enable = False
+        time.sleep(3)
+        vel_msg = Twist()
+        vel_msg.linear.z = -1.0
+        for i in range(5):
+            for idx in range(self.num_agents):
+                self.vel_pub_list[idx].publish(vel_msg)
+        self.get_logger().info("Finish Landing ")
+
+        return res
+
+        
 
     ###############################################
     ###### Timer loop
     ###############################################
 
     def main_loop(self,idx):
-        # self.get_logger().info(f"Debug! agent number: {idx:.1f}")
-        # update neighbor
-        if not self.neighbor_list == []: 
-            self.agent_list[idx].neighbor_agents = self.neighbor_list[idx]
-        # update map for each agent
-        self.agent_list[idx].update_perception_field(self.map)
+        if self.enable:
+            # self.get_logger().info(f"Debug! agent number: {idx:.1f}")
+            # update neighbor
+            if not self.neighbor_list == []: 
+                self.agent_list[idx].neighbor_agents = self.neighbor_list[idx]
+            # update map for each agent
+            self.agent_list[idx].update_perception_field(self.map)
 
-        # Reynold 
-        zero = Point()
-        # if idx == 0:
-        nav_acc = self.agent_list[idx].navigation_acc()
-        # else:
-            # nav_acc = zero
+            # Reynold 
+            zero = Point()
+            # if idx == 0:
+            nav_acc = self.agent_list[idx].navigation_acc()
+            # else:
+                # nav_acc = zero
 
-        sep_acc = self.agent_list[idx].seperation_acc()
-        coh_acc = zero
-        align_acc = zero
-        obs_acc = zero#self.agent_list[idx].obstacle_acc()
+            sep_acc = self.agent_list[idx].seperation_acc()
+            coh_acc = zero
+            align_acc = zero
+            obs_acc = zero#self.agent_list[idx].obstacle_acc()
 
-        if self.protocol == "Flocking" :
-            coh_acc = self.agent_list[idx].cohesion_acc()
-            align_acc = self.agent_list[idx].allignment_acc()
-            
-        self.acc_list = [nav_acc,sep_acc,coh_acc,align_acc,obs_acc]
+            if self.protocol == "Flocking" :
+                coh_acc = self.agent_list[idx].cohesion_acc()
+                align_acc = self.agent_list[idx].allignment_acc()
+                
+            self.acc_list = [nav_acc,sep_acc,coh_acc,align_acc,obs_acc]
 
-        all_acc = self.agent_list[idx].combine_acc_priority(nav_acc,sep_acc,coh_acc,align_acc,obs_acc)    
+            all_acc = self.agent_list[idx].combine_acc_priority(nav_acc,sep_acc,coh_acc,align_acc,obs_acc)    
 
-        # reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt,obs_acc)
-        reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt)
+            # reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt,obs_acc)
+            reynold_vel = self.agent_list[idx].cal_velocity(all_acc,self.dt)
 
-        # Consensus
-        consensus_vel = zero
-        if self.protocol != "Flocking":
-            consensus_vel = self.consensus_vel_list[idx]
-
-        #stubborn agent
-        if  self.agent_list[idx].goal != None:
+            # Consensus
             consensus_vel = zero
-            
-        # combine velocity (Reynold + Consensus)
-        # if idx == 2:
-        #     self.get_logger().info(f"Debug! reynold_vel X: {reynold_vel.x:.3f}, consensus_vel X: {consensus_vel.x:.3f}, reynold_vel Y: {reynold_vel.y:.3f}, consensus_vel Y: {consensus_vel.y:.3f}")
+            if self.protocol != "Flocking":
+                consensus_vel = self.consensus_vel_list[idx]
 
-        out_vel = self.combine_vel(reynold_vel ,consensus_vel)
-        # publish        
-        vel_msg = Twist()
-        vel_msg.linear.x = out_vel.x
-        vel_msg.linear.y = out_vel.y
-        self.vel_pub_list[idx].publish(vel_msg)
+            #stubborn agent
+            if  self.agent_list[idx].goal != None:
+                consensus_vel = zero
+                
+            # combine velocity (Reynold + Consensus)
+            # if idx == 2:
+            #     self.get_logger().info(f"Debug! reynold_vel X: {reynold_vel.x:.3f}, consensus_vel X: {consensus_vel.x:.3f}, reynold_vel Y: {reynold_vel.y:.3f}, consensus_vel Y: {consensus_vel.y:.3f}")
+
+            out_vel = self.combine_vel(reynold_vel ,consensus_vel)
+            # publish        
+            vel_msg = Twist()
+            vel_msg.linear.x = out_vel.x
+            vel_msg.linear.y = out_vel.y
+            self.vel_pub_list[idx].publish(vel_msg)
+        else:
+            vel_msg = Twist()
+            self.vel_pub_list[idx].publish(vel_msg)
 
     def neighbor_loop(self):
         neighbor_list = []
@@ -380,7 +426,7 @@ class CrazyFliesNode(Node):
             l = 0
             for i in range(self.num_agents):
                 formation[i] = [0,l]
-                l = l - 0.4
+                l = l - 0.8
             # put the rest in between
             # TODO
             return list(formation)
@@ -416,6 +462,17 @@ class CrazyFliesNode(Node):
                 x = r * np.cos(angle)
                 y = r - r * np.sin(angle)
                 formation[i] = [x, y]
+            return list(formation)
+        elif protocol == "Line2":
+            if self.num_agents < 2:
+                self.get_logger().error("Agent not enough for Line formation")
+                return list(formation)
+            l = 0
+            for i in range(self.num_agents):
+                formation[i] = [l,0]
+                l = l - 0.8
+            # put the rest in between
+            # TODO
             return list(formation)
         else:
             return list(formation)
