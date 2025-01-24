@@ -8,6 +8,7 @@ from nav_msgs.msg import OccupancyGrid, Path, MapMetaData
 from visualization_msgs.msg import Marker, MarkerArray
 from .utils.OccupancyMap import OccupancyMap
 from nav2_msgs.srv import LoadMap
+from std_srvs.srv import Trigger
 
 import yaml
 import cv2
@@ -41,7 +42,7 @@ class CrazyFliesNode(Node):
         self.agent_list = []
         self.trajectory = []
         self.neighbor_list = [] # list of list of agents [[agent1,agent2], [agent4],....]
-        self.num_leaders = 3
+        self.num_leaders = 1
         self.consensus_vel_list = []
 
         # create a list of publisher, subscriber for each fly
@@ -80,13 +81,13 @@ class CrazyFliesNode(Node):
         self.map_publisher = self.create_publisher(OccupancyGrid, '/map_field', 10)
 
         # Formation related Variable
-        self.protocol = "Flocking" #"Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line", "Pentagon", "Hexagon"
+        self.protocol = "Line" #"Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line", "Pentagon", "Hexagon"
         self.use_fixed_connection = True
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
 
-        map_yaml_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/simple_maze_10x10/simple_maze_10x10.yaml'
-        map_image_path = '/home/leopt4/CrazySim/ros2_ws/src/mrs_crazyflies_project/resource/maps/simple_maze_10x10/simple_maze_10x10.bmp'
+        map_yaml_path = '/root/ros2_ws/src/mrs_crazyflies_project/resource/maps/simple_maze_10x10/simple_maze_10x10.yaml'
+        map_image_path = '/root/ros2_ws/src/mrs_crazyflies_project/resource/maps/simple_maze_10x10/simple_maze_10x10.bmp'
         occupancy_map = self.load_map(map_yaml_path, map_image_path)
 
         self.map = OccupancyMap()
@@ -99,6 +100,11 @@ class CrazyFliesNode(Node):
         
 
         self.perception_field_publisher = self.create_publisher(OccupancyGrid, '/perception_field', 10)
+
+        # formation service
+        # self.seq = ["Triangle","Line","Line2"]
+        # self.seq_idx = 0
+        # self.form_srv = self.create_service(Trigger, 'change_formation', self.change_formation)
 
         time.sleep(3)
         self.get_logger().info("waiting for takng off...")
@@ -125,7 +131,7 @@ class CrazyFliesNode(Node):
         # Create and populate the OccupancyGrid message
         grid = OccupancyGrid()
         grid.header.stamp = self.get_clock().now().to_msg()
-        grid.header.frame_id = "world"  # Make sure this matches your TF frames
+        grid.header.frame_id = "map"  # Make sure this matches your TF frames
         grid.info = MapMetaData()
         grid.info.resolution = perception_field.resolution
         grid.info.width = perception_field.map_dim[1]
@@ -169,6 +175,12 @@ class CrazyFliesNode(Node):
         for i in range(self.num_leaders):
             self.agent_list[i].goal = msg.pose.position
 
+    # def change_formation(self,req,res):
+        
+    #     self.formation = self.create_formation(self.seq[self.seq_idx])
+    #     self.seq_idx = (self.seq_idx + 1) % 3
+    #     return res
+
     ###############################################
     ###### Timer loop
     ###############################################
@@ -179,7 +191,7 @@ class CrazyFliesNode(Node):
         if not self.neighbor_list == []: 
             self.agent_list[idx].neighbor_agents = self.neighbor_list[idx]
         # update map for each agent
-        self.agent_list[idx].update_perception_field(self.map)
+        # self.agent_list[idx].update_perception_field(self.map)
 
         # Reynold 
         zero = Point()
@@ -263,7 +275,7 @@ class CrazyFliesNode(Node):
         L = np.diag(L_diag)
         # fill in the rest of the elements of L
         L -= A
-        L = L/self.num_agents
+        L = L/(self.num_agents*4)
         return L
     
     def cal_rendezvous_vel(self,agents_list, A):
@@ -366,8 +378,8 @@ class CrazyFliesNode(Node):
             formation[0] = [0.0,0.0]
             # formation[1] = [w,-w]
             # formation[2] = [-w,-w]
-            formation[1] = [-3.0,0.0]
-            formation[2] = [-1.5,3*0.866]
+            formation[1] = [0.4,0.8*0.866]
+            formation[2] = [-0.4,0.8*0.866]
             # put the rest in between
             # TODO
             # formation[2] = [0,-w] # menawhile just put in between
@@ -380,7 +392,7 @@ class CrazyFliesNode(Node):
             l = 0
             for i in range(self.num_agents):
                 formation[i] = [0,l]
-                l = l - 0.4
+                l = l - 0.8
             # put the rest in between
             # TODO
             return list(formation)
@@ -438,7 +450,7 @@ class CrazyFliesNode(Node):
 
     def visualize_goal(self):
         if self.agent_list[0].goal:
-            frame_id = "world"
+            frame_id = "map"
             ns = "goal"
 
             marker = self.create_marker(666,ns, Marker.SPHERE, [self.agent_list[0].goal.x,self.agent_list[0].goal.y,0.2], 
@@ -450,7 +462,7 @@ class CrazyFliesNode(Node):
             # Create a new pose stamped with the current position
             pose_stamped = PoseStamped()
             pose_stamped.header.stamp = self.get_clock().now().to_msg()
-            pose_stamped.header.frame_id = "world"
+            pose_stamped.header.frame_id = "map"
             pose_stamped.pose.position.x = self.agent_list[i].position.x
             pose_stamped.pose.position.y = self.agent_list[i].position.y
 
@@ -462,12 +474,12 @@ class CrazyFliesNode(Node):
             if len(self.trajectory[i].poses) > traj_to_keep:
                 self.trajectory[i].poses = self.trajectory[i].poses[-traj_to_keep:]
 
-            self.trajectory[i].header.frame_id = "world"
+            self.trajectory[i].header.frame_id = "map"
 
             self.traj_pub_list[i].publish(self.trajectory[i])
 
     def visualize_connections(self):
-        frame_id = "world"
+        frame_id = "map"
         ns = "connections"
 
         points = []
@@ -482,7 +494,7 @@ class CrazyFliesNode(Node):
         self.visualize_array.markers.append(marker)
     
     def visualize_formation(self):
-        frame_id = "world"
+        frame_id = "map"
         ns = "formation"
 
         points = []
@@ -561,7 +573,7 @@ class CrazyFliesNode(Node):
         # Create and populate the OccupancyGrid message
         grid = OccupancyGrid()
         grid.header.stamp = self.get_clock().now().to_msg()
-        grid.header.frame_id = "world"  # Make sure this matches your TF frames
+        grid.header.frame_id = "map"  # Make sure this matches your TF frames
         grid.info = MapMetaData()
         grid.info.resolution = resolution
         grid.info.width = image.shape[1]

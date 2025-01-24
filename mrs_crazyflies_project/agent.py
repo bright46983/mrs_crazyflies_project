@@ -30,14 +30,14 @@ class Agent:
 
         #tuning params
         self.max_acc = 8.0
-        self.max_vel = 0.5
+        self.max_vel = 0.3
         # self.max_acc = 3.0
         # self.max_vel = 0.5
         self.min_vel = 0.0
         self.nav_gain = 0.6  # Navigation gain, controls the strength of the navigation behavior 0.2
-        self.neighbor_range =  1.2 # 2.0#
+        self.neighbor_range =  10 # 2.0#
         self.neightbor_angle = np.pi/1
-        self.seperation_range = 0.25
+        self.seperation_range = 0.60
         # [10.0,0.8,1.5,0.5,2.0,0.5] #[6.3,1.5,1.5,0.5,1.4,0.5]
         # self.weight_list = [7.0,1.4,1.5,0.4,1.4,0.5]
         # [obs_acc, sep_acc, arr_acc,nav_acc,allign_acc,coh_acc] ---- [6.0, 1.0, 1.5, 0.4, 1.4, 0.5]

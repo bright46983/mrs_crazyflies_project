@@ -1,6 +1,6 @@
-cf_1_connections: [0] # recieved information from 
-cf_2_connections: [0]
-cf_3_connections: [0]
+cf_1_connections: [2,3] # recieved information from 
+cf_2_connections: [1,3]
+cf_3_connections: [1,2]
 cf_4_connections: [0]
 cf_5_connections: [0]
 cf_6_connections: [0]
