@@ -47,6 +47,9 @@ class CrazyFliesNode(Node):
 
         # create a list of publisher, subscriber for each fly
         self.vel_pub_list = []
+        self.rey_pub_list = []
+        self.con_pub_list = []
+
         self.traj_pub_list = []
         self.connection_list = []
         
@@ -69,7 +72,14 @@ class CrazyFliesNode(Node):
 
             # create publisher for each fly
             vel_pub = self.create_publisher(Twist, '/cf_{}/cmd_vel'.format(i+1), 10)
+            vel_rey_pub = self.create_publisher(Twist, '/cf_{}/cmd_vel_rey'.format(i+1), 10)
+            vel_con_pub = self.create_publisher(Twist, '/cf_{}/cmd_vel_con'.format(i+1), 10)
+
+
             self.vel_pub_list.append(vel_pub) 
+            self.con_pub_list.append(vel_con_pub) 
+            self.rey_pub_list.append(vel_rey_pub) 
+
             traj_pub = self.create_publisher(Path, '/cf_{}/path'.format(i+1), 10)
             self.traj_pub_list.append(traj_pub) 
 
@@ -81,7 +91,7 @@ class CrazyFliesNode(Node):
         self.map_publisher = self.create_publisher(OccupancyGrid, '/map_field', 10)
 
         # Formation related Variable
-        self.protocol = "Line" #"Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line", "Pentagon", "Hexagon"
+        self.protocol = "Triangle" #"Rectangle" # "Flocking","Rendezvous", "Rectangle", "Triangle", "Line", "Pentagon", "Hexagon"
         self.use_fixed_connection = True
         self.A_matrix = self.create_A_matrix(self.protocol,self.connection_list)
         self.formation = self.create_formation(self.protocol)
@@ -102,9 +112,9 @@ class CrazyFliesNode(Node):
         self.perception_field_publisher = self.create_publisher(OccupancyGrid, '/perception_field', 10)
 
         # formation service
-        # self.seq = ["Triangle","Line","Line2"]
-        # self.seq_idx = 0
-        # self.form_srv = self.create_service(Trigger, 'change_formation', self.change_formation)
+        self.seq = ["Triangle","Line","Line2"]
+        self.seq_idx = 1
+        self.form_srv = self.create_service(Trigger, 'change_formation', self.change_formation)
 
         time.sleep(3)
         self.get_logger().info("waiting for takng off...")
@@ -175,11 +185,11 @@ class CrazyFliesNode(Node):
         for i in range(self.num_leaders):
             self.agent_list[i].goal = msg.pose.position
 
-    # def change_formation(self,req,res):
+    def change_formation(self,req,res):
         
-    #     self.formation = self.create_formation(self.seq[self.seq_idx])
-    #     self.seq_idx = (self.seq_idx + 1) % 3
-    #     return res
+        self.formation = self.create_formation(self.seq[self.seq_idx])
+        self.seq_idx = (self.seq_idx + 1) % 3
+        return res
 
     ###############################################
     ###### Timer loop
@@ -227,14 +237,26 @@ class CrazyFliesNode(Node):
             
         # combine velocity (Reynold + Consensus)
         # if idx == 2:
-        #     self.get_logger().info(f"Debug! reynold_vel X: {reynold_vel.x:.3f}, consensus_vel X: {consensus_vel.x:.3f}, reynold_vel Y: {reynold_vel.y:.3f}, consensus_vel Y: {consensus_vel.y:.3f}")
+        # self.get_logger().info(f"Debug! reynold_vel X: {reynold_vel.x:.3f}, consensus_vel X: {consensus_vel.x:.3f}, reynold_vel Y: {reynold_vel.y:.3f}, consensus_vel Y: {consensus_vel.y:.3f}")
 
         out_vel = self.combine_vel(reynold_vel ,consensus_vel)
         # publish        
         vel_msg = Twist()
-        vel_msg.linear.x = out_vel.x
-        vel_msg.linear.y = out_vel.y
-        self.vel_pub_list[idx].publish(vel_msg)
+        rey_msg = Twist()
+        con_msg = Twist()
+
+        if idx == 0:
+            ...
+        else:
+            vel_msg.linear.x = out_vel.x
+            vel_msg.linear.y = out_vel.y
+            self.vel_pub_list[idx].publish(vel_msg)
+            rey_msg.linear.x = reynold_vel.x
+            rey_msg.linear.y = reynold_vel.y
+            self.rey_pub_list[idx].publish(rey_msg)
+            con_msg.linear.x = consensus_vel.x
+            con_msg.linear.y = consensus_vel.y
+            self.con_pub_list[idx].publish(con_msg)
 
     def neighbor_loop(self):
         neighbor_list = []
@@ -275,7 +297,7 @@ class CrazyFliesNode(Node):
         L = np.diag(L_diag)
         # fill in the rest of the elements of L
         L -= A
-        L = L/(self.num_agents*4)
+        L = L/(self.num_agents*10)
         return L
     
     def cal_rendezvous_vel(self,agents_list, A):
@@ -392,6 +414,17 @@ class CrazyFliesNode(Node):
             l = 0
             for i in range(self.num_agents):
                 formation[i] = [0,l]
+                l = l - 0.8
+            # put the rest in between
+            # TODO
+            return list(formation)
+        elif protocol == "Line2":
+            if self.num_agents < 2:
+                self.get_logger().error("Agent not enough for Line formation")
+                return list(formation)
+            l = 0
+            for i in range(self.num_agents):
+                formation[i] = [l,0]
                 l = l - 0.8
             # put the rest in between
             # TODO
